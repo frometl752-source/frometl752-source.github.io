@@ -1,1 +1,292 @@
-Hello Fromet!!!
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>表情包网格切图工具 (6x4)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #4f46e5;
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+        }
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            background: var(--card-bg);
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 { margin-bottom: 1.5rem; color: #1f2937; }
+        
+        /* 控制面板 */
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+        }
+
+        /* 按钮样式 */
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .btn:hover { background-color: #4338ca; }
+        .btn:disabled { background-color: #9ca3af; cursor: not-allowed; }
+        .btn-upload { background-color: #059669; }
+        
+        /* 预览区域 */
+        #preview-container {
+            position: relative;
+            margin: 20px auto;
+            max-width: 100%;
+            overflow: hidden;
+            border: 2px dashed #d1d5db;
+            display: none; /* 初始隐藏 */
+        }
+        
+        #preview-img {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        /* 网格遮罩 */
+        #grid-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        /* 结果区域 */
+        .result-area {
+            margin-top: 20px;
+            display: none;
+        }
+        .status {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>✂️ 表情包网格切分工具</h1>
+        
+        <div class="controls">
+            <input type="file" id="fileInput" accept="image/*" style="display: none;">
+            <button class="btn btn-upload" onclick="document.getElementById('fileInput').click()">📁 上传图片</button>
+            
+            <div class="input-group">
+                <label>横向(列):</label>
+                <input type="number" id="colInput" value="6" min="1">
+            </div>
+            <div class="input-group">
+                <label>纵向(行):</label>
+                <input type="number" id="rowInput" value="4" min="1">
+            </div>
+
+            <button class="btn" id="previewBtn" disabled>刷新预览网格</button>
+        </div>
+
+        <div id="preview-container">
+            <img id="preview-img" alt="Source Image">
+            <canvas id="grid-overlay"></canvas>
+        </div>
+
+        <div class="result-area" id="resultArea">
+            <button class="btn" id="downloadBtn">📦 生成并下载 ZIP</button>
+            <p class="status" id="statusText"></p>
+        </div>
+    </div>
+
+    <canvas id="processCanvas" style="display: none;"></canvas>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const previewContainer = document.getElementById('preview-container');
+        const previewImg = document.getElementById('preview-img');
+        const gridOverlay = document.getElementById('grid-overlay');
+        const colInput = document.getElementById('colInput');
+        const rowInput = document.getElementById('rowInput');
+        const previewBtn = document.getElementById('previewBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const resultArea = document.getElementById('resultArea');
+        const statusText = document.getElementById('statusText');
+        const processCanvas = document.getElementById('processCanvas');
+
+        let originalImage = new Image();
+        let isImageLoaded = false;
+
+        // 1. 监听文件上传
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                originalImage = new Image();
+                originalImage.onload = () => {
+                    isImageLoaded = true;
+                    previewImg.src = originalImage.src;
+                    previewContainer.style.display = 'block';
+                    previewBtn.disabled = false;
+                    resultArea.style.display = 'block';
+                    drawGrid(); // 图片加载完立即画网格
+                };
+                originalImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // 2. 刷新网格预览
+        previewBtn.addEventListener('click', drawGrid);
+        
+        // 当输入框改变时自动刷新网格
+        colInput.addEventListener('input', drawGrid);
+        rowInput.addEventListener('input', drawGrid);
+
+        // 绘制红色参考线
+        function drawGrid() {
+            if (!isImageLoaded) return;
+
+            // 设置Overlay Canvas的大小与显示的图片大小一致（注意是CSS渲染大小，不是原始像素大小）
+            // 这里我们需要获取图片在页面上的实际显示尺寸
+            const rect = previewImg.getBoundingClientRect();
+            gridOverlay.width = rect.width;
+            gridOverlay.height = rect.height;
+
+            const ctx = gridOverlay.getContext('2d');
+            const cols = parseInt(colInput.value);
+            const rows = parseInt(rowInput.value);
+
+            ctx.clearRect(0, 0, gridOverlay.width, gridOverlay.height);
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+
+            const cellW = gridOverlay.width / cols;
+            const cellH = gridOverlay.height / rows;
+
+            // 画垂直线
+            for (let i = 1; i < cols; i++) {
+                ctx.moveTo(i * cellW, 0);
+                ctx.lineTo(i * cellW, gridOverlay.height);
+            }
+            // 画水平线
+            for (let j = 1; j < rows; j++) {
+                ctx.moveTo(0, j * cellH);
+                ctx.lineTo(gridOverlay.width, j * cellH);
+            }
+            ctx.stroke();
+        }
+
+        // 3. 执行切图并打包下载
+        downloadBtn.addEventListener('click', async () => {
+            if (!isImageLoaded) return;
+
+            statusText.innerText = "正在处理中，请稍候...";
+            downloadBtn.disabled = true;
+
+            const cols = parseInt(colInput.value);
+            const rows = parseInt(rowInput.value);
+            const ctx = processCanvas.getContext('2d');
+            const zip = new JSZip();
+            const folder = zip.folder("emojis");
+
+            // 计算单个切片的原始尺寸
+            const sliceWidth = originalImage.width / cols;
+            const sliceHeight = originalImage.height / rows;
+
+            // 调整处理Canvas的大小为单个切片的大小
+            processCanvas.width = sliceWidth;
+            processCanvas.height = sliceHeight;
+
+            let count = 0;
+
+            // 循环切图
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    // 清空画布
+                    ctx.clearRect(0, 0, sliceWidth, sliceHeight);
+                    
+                    // drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
+                    ctx.drawImage(
+                        originalImage, 
+                        c * sliceWidth, r * sliceHeight, sliceWidth, sliceHeight, // 裁剪源位置
+                        0, 0, sliceWidth, sliceHeight // 放置目标位置
+                    );
+
+                    // 转换由于Canvas为Blob
+                    const blob = await new Promise(resolve => processCanvas.toBlob(resolve, 'image/png'));
+                    
+                    // 格式化文件名：emoji_01.png, emoji_02.png...
+                    count++;
+                    const fileName = `emoji_${count.toString().padStart(2, '0')}.png`;
+                    folder.file(fileName, blob);
+                }
+            }
+
+            // 生成Zip并触发下载
+            statusText.innerText = "正在打包...";
+            zip.generateAsync({type:"blob"})
+            .then(function(content) {
+                saveAs(content, "emojis_pack.zip");
+                statusText.innerText = `✅ 完成！已下载 ${count} 张图片。`;
+                downloadBtn.disabled = false;
+            });
+        });
+
+        // 窗口大小改变时重绘网格以保持对齐
+        window.addEventListener('resize', () => {
+             if(isImageLoaded) setTimeout(drawGrid, 100);
+        });
+
+    </script>
+</body>
+</html>
